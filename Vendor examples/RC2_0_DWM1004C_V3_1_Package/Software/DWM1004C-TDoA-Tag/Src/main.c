@@ -233,11 +233,11 @@ int main(void)
 // Initialise the accelerometer
 //
 // in case of equal intervals disable the accelerometer
-  if ( app.pConfig->blink.interval_in_ms == app.pConfig->blink.interval_slow_in_ms ) {
-	  lis3dh_powerdown();
-  }else{
-	  lis3dh_configure_int();
-  }
+//  if ( app.pConfig->blink.interval_in_ms == app.pConfig->blink.interval_slow_in_ms ) {
+//	  lis3dh_powerdown();
+//  }else{
+//	  lis3dh_configure_int();
+//  }
 
   /* USER CODE END 2 */
 
@@ -250,7 +250,8 @@ int main(void)
   while (1)
   {
 
-	  vTestModeMotionDetect();
+	  //ACCELEROMETER
+//	  vTestModeMotionDetect();
 
       if( deca_uart_rx_data_ready() )
       {

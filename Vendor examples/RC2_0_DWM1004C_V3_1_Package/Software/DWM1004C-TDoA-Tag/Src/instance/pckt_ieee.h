@@ -39,4 +39,37 @@ typedef struct
     uint8 fcs[2] ;
 } iso_IEEE_EUI64_blink_msg ;
 
+
+typedef enum {
+	FC_POLL = 0xE0,
+	FC_RESPONSE,
+	FC_FINAL
+} Function_Code;
+
+typedef struct{
+	const uint8_t ctrl1;	// 0x41
+	const uint8_t ctrl2;	// 0x88
+	uint8_t seq_num;
+	const uint8_t PAN_id[2];	// 0xABCD
+	uint8_t dst[2];		// address
+	uint8_t src[2];		// address
+	uint8_t fc;
+	uint8_t fcs[2];
+} Ranging_Frame;
+
+typedef struct{
+	const uint8_t ctrl1;	// 0x41
+	const uint8_t ctrl2;	// 0x88
+	uint8_t seq_num;
+	const uint8_t PAN_id[2];	// 0xABCD
+	uint8_t dst[2];		// address
+	uint8_t src[2];		// address
+	uint8_t fc;
+	uint8_t timestamps[15];
+	uint8_t fcs[2];
+} Ranging_Frame_Final;
+//where addresses is: INITIATOR - 0x0001, RESPONDER - 0x0002
+
+
+
 #endif //IEEE_EUI_64_TAG

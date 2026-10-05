@@ -143,7 +143,7 @@ int inittestapplication(void)
    }
 
    // configure: if DW1000 is calibrated then OTP config is used, enable sleep
-   result = instance_init( 1 );
+   result = instance_init( 0 );
 
    if (0 > result) {
 	   Error_Handler();

@@ -180,8 +180,8 @@ int testapprun(instance_data_t *inst, int message)
             instancesettagaddress(inst);
 
             //configure the on wake parameters (upload the IC config settings)
-            dwt_configuresleep(AON_WCFG_ONW_RADC | DWT_PRESRV_SLEEP| DWT_CONFIG,
-                               DWT_WAKE_CS|DWT_SLP_EN);
+//            dwt_configuresleep(AON_WCFG_ONW_RADC | DWT_PRESRV_SLEEP| DWT_CONFIG,
+//                               DWT_WAKE_CS|DWT_SLP_EN);
 
             /* change to next state - send a Blink message */
             /* instance is configured to send TDOA tag blinks */
@@ -294,7 +294,7 @@ int instance_init(int sleep_enable)
       tvc_otp_read_txcfgref(&ref, pbss->dwt_config.chan);
     }
 
-    dwt_entersleepaftertx(1);
+    dwt_entersleepaftertx(0);
 
     if (DWT_SUCCESS != result)
     {

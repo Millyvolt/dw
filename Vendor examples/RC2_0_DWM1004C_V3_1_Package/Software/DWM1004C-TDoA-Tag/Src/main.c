@@ -243,6 +243,16 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  // NOTES TO DO
+  /*
+   * need to null fields in Ranging_Frame structs objects
+   * testapprun() func contains not valid code for now
+   *
+   */
+
+
+
   // No RTOS tasks, so just call the main loop here.
 
   __enable_irq();

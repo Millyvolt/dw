@@ -22,6 +22,17 @@ extern "C" {
 #include "deca_device_api.h"
 #include "pckt_ieee.h"
 
+
+
+#define TWR_INT	0
+#define TWR_RSP	1
+
+#define TWR_ROLE	TWR_INT
+//#define TWR_ROLE	TWR_RSP
+
+#define TS_MASK		0xFFFFFFFFFFULL		// select 40 bits in 64 bits word
+
+
 typedef struct
 {
     param_block_t  	*pConfig;
@@ -57,6 +68,19 @@ typedef struct
     uint8        timeron;
     uint32        timeout;
     uint16_t chipSleep; // The DW1000 sleep duration
+
+    uint64_t poll_tx_ts;
+    uint64_t poll_rx_ts;
+    uint64_t resp_tx_ts;
+    uint64_t resp_rx_ts;
+    uint64_t final_tx_ts;
+    uint64_t final_rx_ts;
+
+    Ranging_Frame poll_msg;
+    Ranging_Frame resp_msg;
+    Ranging_Frame_Final final_msg;
+
+    uint8_t rx_buffer[27];
 } instance_data_t ;
 
 /* Exported functions prototypes */

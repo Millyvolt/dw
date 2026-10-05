@@ -65,7 +65,7 @@ typedef struct{
 	uint8_t dst[2];		// address
 	uint8_t src[2];		// address
 	uint8_t fc;
-	uint8_t timestamps[15];
+	uint8_t timestamps[15];		// difference from Ranging_Frame
 	uint8_t fcs[2];
 } Ranging_Frame_Final;
 //where addresses is: INITIATOR - 0x0001, RESPONDER - 0x0002

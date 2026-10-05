@@ -26,6 +26,11 @@ LOWPOWER_RESTART_TIME. So LOWPOWER_RESTART_TIME is configured as 15 */
 
 #define DWT_SIG_RX_TIMEOUT              4
 
+#define DWT_SIG_RX_OKAY 				1
+#define DWT_SIG_TX_DONE 				2
+#define DWT_SIG_RX_ERROR 				3
+
+
 /* DW1000 device variables */
 static dwt_txconfig_t tx_cfg;
 static ref_values_t ref = {0};
@@ -33,8 +38,12 @@ static ref_values_t ref = {0};
 enum inst_states
 {
    TA_INIT,
-   TA_SLEEP_DONE,
-   TA_TXBLINK_WAIT_SEND
+   TA_TX_POLL, 		// initiator sends the poll
+   TA_WAIT_RESP, 	// initiator waits for the response
+   TA_TX_FINAL, 	// initiator sends the delayed final
+   TA_WAIT_POLL,	// responder waits for a poll
+   TA_TX_RESP, 		// responder sends the delayed response
+   TA_WAIT_FINAL	// responder waits for the final
 };
 
 typedef struct {
@@ -129,7 +138,11 @@ const uint16 rfDelays[2] = {
 };
 // -----------------------------------------------------------------------------
 
-instance_data_t instance_data ;
+instance_data_t instance_data = {
+	.poll_msg  = {.ctrl1=0x41, .ctrl2=0x88, .PAN_id[0]=0xAB, .PAN_id[1]=0xCD},
+	.resp_msg  = {.ctrl1=0x41, .ctrl2=0x88, .PAN_id[0]=0xAB, .PAN_id[1]=0xCD},
+	.final_msg = {.ctrl1=0x41, .ctrl2=0x88, .PAN_id[0]=0xAB, .PAN_id[1]=0xCD},
+																				};
 
 // -----------------------------------------------------------------------------
 // Functions
@@ -176,78 +189,72 @@ int testapprun(instance_data_t *inst, int message)
     switch (inst->testAppState)
     {
         case TA_INIT :
-        {
-            instancesettagaddress(inst);
-
+//            instancesettagaddress(inst);
             //configure the on wake parameters (upload the IC config settings)
 //            dwt_configuresleep(AON_WCFG_ONW_RADC | DWT_PRESRV_SLEEP| DWT_CONFIG,
 //                               DWT_WAKE_CS|DWT_SLP_EN);
 
-            /* change to next state - send a Blink message */
-            /* instance is configured to send TDOA tag blinks */
-            inst->testAppState = TA_TXBLINK_WAIT_SEND;
-            break; // end case TA_INIT
-        }
+            inst->testAppState = TWR_ROLE == TWR_INT ? TA_TX_POLL : (TWR_ROLE == TWR_RSP ? TA_WAIT_POLL : TA_INIT) ;
 
-        case TA_SLEEP_DONE :
-        {
-            if(message != DWT_SIG_RX_TIMEOUT)
-            {
-                inst->done = 1;
-                break;
-            }
+            break;
 
-            // when there is no ext. power, system waking up in lowpower.c
-            if (DWT_DEVICE_ID == dwt_readdevid() )
-            {
-                inst->done = 0;
-                inst->testAppState = TA_TXBLINK_WAIT_SEND;
+        case TA_TX_POLL:
 
-                break;//TA_SLEEP_DONE
-            }
+        	poll_msg.seq_num = frame_sn++;
+        	poll_msg.dst[0] = 0;
+        	poll_msg.dst[1] = 2;
+        	poll_msg.src[0] = 0;
+        	poll_msg.src[1] = 1;
+        	poll_msg.fc = FC_POLL;
 
-            /* if DW1000 did not waked up while MCU started up from lowpower,
-             * then we need to perform the "slow wake up" */
-            port_wakeup_dw1000();
+        	dwt_writetxdata(sizeof(poll_msg), (uint8_t *)&poll_msg, 0);
+        	dwt_writetxfctrl(sizeof(poll_msg), 0, 1);
+        	dwt_setrxaftertxdelay(300);
+        	dwt_setrxtimeout(5000);
 
-            inst->done = 0;
-            inst->testAppState = TA_TXBLINK_WAIT_SEND;
+            inst->testAppState = TA_WAIT_RESP;
+        	inst->done = 1;
 
-            break; //TA_SLEEP_DONE
-        }
+            break;
 
-        case TA_TXBLINK_WAIT_SEND :
-        {
-            int length;
-
+        case TA_WAIT_RESP:
             /* Do temperature and voltage compensation and get the values of tx_cfg */
             /* the right way:
              * read T and V
              * check the difference wrt previous T and V
              * if greater than (in counts, dont need degrees and volts) - do TVC, store the new values
              */
-            tvc_comp(&tx_cfg, &ref, pbss->dwt_config.chan);
+//            tvc_comp(&tx_cfg, &ref, pbss->dwt_config.chan);
 
             /* Configure tx power with new values for temperature and voltage compensation */
-            dwt_configuretxrf(&tx_cfg);
-
-            //blink frames with IEEE EUI-64 tag with variable dwp/dwh set
-            inst->msg.frameCtrl = FCS_EUI_64 ;
-            inst->msg.seqNum = inst->frame_sn++;
-
-            length = (FRAME_CRTL_AND_ADDRESS + FRAME_CRC);
+//            dwt_configuretxrf(&tx_cfg);
 
             // write the frame data
-            dwt_writetxdata(length, (uint8 *)  (&inst->msg), 0) ;
-            dwt_writetxfctrl(length, 0, 0);
+//            dwt_writetxdata(length, (uint8 *)  (&inst->msg), 0) ;
+//            dwt_writetxfctrl(length, 0, 0);
 
-            dwt_starttx(DWT_START_TX_IMMEDIATE); //always using immediate TX
+//            dwt_starttx(DWT_START_TX_IMMEDIATE); //always using immediate TX
 
-            inst->done = 2; //don't sleep here but kick off the TagTimeoutTimer
-            inst->testAppState = TA_SLEEP_DONE;
+//            inst->testAppState = TA_WAIT_RESP;
+        	inst->done = 1;
 
-            break; //TA_TXBLINK_WAIT_SEND
-        }
+            break;
+
+        case TA_TX_FINAL:
+        	inst->done = 1;
+        	break;
+
+        case TA_WAIT_POLL:
+        	inst->done = 1;
+        	break;
+
+        case TA_TX_RESP:
+        	inst->done = 1;
+        	break;
+
+        case TA_WAIT_FINAL:
+        	inst->done = 1;
+        	break;
 
         default:
             break;
@@ -312,6 +319,13 @@ int instance_init(int sleep_enable)
     instance_data.event[0] = 0;
     instance_data.event[1] = 0;
     instance_data.eventCnt = 0;
+
+	instance_data.poll_tx_ts = 0;
+	instance_data.poll_rx_ts = 0;
+	instance_data.resp_tx_ts = 0;
+	instance_data.resp_rx_ts = 0;
+	instance_data.final_tx_ts = 0;
+	instance_data.final_rx_ts = 0;
 
     return 0 ;
 }

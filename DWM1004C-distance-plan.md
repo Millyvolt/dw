@@ -4,7 +4,7 @@ You edit `Vendor examples/RC2_0_DWM1004C_V3_1_Package/Software/DWM1004C-TDoA-Tag
 
 Same binary shape on both modules. One `#define` selects initiator or responder. Radio settings stay the ones already in `Src/config/default_config.h`: channel 2, 64 MHz PRF, 128-symbol preamble, 6.8 Mbps. Both modules must match.
 
-Status: steps 1, 2, and 3 reviewed and accepted. The role macros in the code are `TWR_INT` and `TWR_RSP`.
+Status: steps 1, 2, 3, and 4 reviewed and accepted. The role macros in the code are `TWR_INT` and `TWR_RSP`.
 
 ```mermaid
 sequenceDiagram
@@ -121,7 +121,17 @@ If `message` is 0, stay in `TA_WAIT_RESP`, set `inst->done = 1`, and return. The
 
 If `message` is `DWT_SIG_RX_TIMEOUT` or `DWT_SIG_RX_ERROR`, set `testAppState` to `TA_TX_POLL` and `inst->done = 1`.
 
-If `message` is `DWT_SIG_RX_OKAY`, accept the frame only when `rx_buffer` has `fc == FC_RESPONSE`, destination `{0x01, 0x00}`, and source `{0x02, 0x00}`. Otherwise treat it as an error and go back to `TA_TX_POLL`.
+If `message` is `DWT_SIG_RX_OKAY`, the response is already in `rx_buffer` as raw bytes (step 7 copies it there with `dwt_readrxdata`). A response is a `Ranging_Frame`, 12 bytes, with no timestamp payload. Read it through that layout:
+
+- byte 0 `0x41`, byte 1 `0x88`
+- byte 2 sequence
+- bytes 3–4 PAN id
+- bytes 5–6 destination, must be `{0x01, 0x00}`
+- bytes 7–8 source, must be `{0x02, 0x00}`
+- byte 9 function code, must be `FC_RESPONSE`
+- bytes 10–11 CRC, already checked by the DW1000
+
+Cast is valid because every field is `uint8_t`: `Ranging_Frame *rx = (Ranging_Frame *)inst->rx_buffer;`. Accept the frame only when `rx->fc == FC_RESPONSE`, `rx->dst` is `{0x01, 0x00}`, and `rx->src` is `{0x02, 0x00}`. Otherwise treat it as an error and go back to `TA_TX_POLL`.
 
 On a good response, read the two timestamps before any new receive:
 
@@ -145,7 +155,7 @@ final_tx_ts = ((uint64)delayed32 << 8) + tx_antenna_delay
 
 Use `tx_antenna_delay = 0` until step 6. The distance will then have a fixed offset. Put the three values into `final_msg.timestamps` as 5 little-endian bytes each, in this order: `poll_tx_ts`, `resp_rx_ts`, `final_tx_ts`.
 
-Fill the rest of `final_msg`: next `seq_num`, destination responder, source initiator, `fc = FC_FINAL`. Set `testAppState` to `TA_TX_FINAL`.
+Fill the rest of `final_msg` with `seq_num = inst->frame_sn++`, the same counter the poll uses, destination responder, source initiator, `fc = FC_FINAL`. Set `testAppState` to `TA_TX_FINAL`. `final_msg.seq_num++` is a second counter and only moves when a final is built, so a timed-out poll makes the two numbers drift.
 
 **`TA_TX_FINAL`**
 
@@ -159,20 +169,99 @@ If it succeeds, wait about 100 ms with `portGetTickCount()` and then set `testAp
 
 ## Step 5 — responder
 
-- `dwt_rxenable(DWT_START_RX_IMMEDIATE)` and stay there.
-- On a poll, schedule the response the same delayed-TX way, then arm RX for the final (`DWT_RESPONSE_EXPECTED` on that delayed TX).
-- On the final, read the three timestamps from the payload and the three local ones. Then:
+Build this image with `#define TWR_ROLE TWR_RSP`. The initiator module keeps `TWR_INT`. Leave the initiator cases as they are. Do not call `low_power()`.
+
+`TA_INIT` already moves the responder to `TA_WAIT_POLL`. `message` stays 0 until step 7. Write the `DWT_SIG_RX_OKAY` / `DWT_SIG_RX_TIMEOUT` / `DWT_SIG_RX_ERROR` tests now.
+
+The main loop calls `instance_run()` again while a wait is still in progress, and that call also sees `message == 0`. `dwt_rxenable()` on every one of those calls restarts the receiver and drops the frame that was arriving. Arm RX once per listen. A `static uint8_t rx_armed` in `testapprun` is enough: call `dwt_rxenable` only when it is 0, then set it to 1. Clear it on every path that goes back to `TA_WAIT_POLL`. Do not reuse `inst->timeron`. `instance_run()` already uses that flag to invent a timeout.
+
+**`TA_WAIT_POLL`**
+
+If `message` is 0 and `rx_armed` is 0, turn the timeout off and listen:
+
+- `dwt_setrxtimeout(0)` so the responder waits until a poll arrives
+- `dwt_rxenable(DWT_START_RX_IMMEDIATE)`
+- `rx_armed = 1`
+
+Stay in `TA_WAIT_POLL`, set `inst->done = 1`, and return. The same return applies when `message` is 0 and RX is already armed: do not call `dwt_rxenable` again.
+
+If `message` is `DWT_SIG_RX_TIMEOUT` or `DWT_SIG_RX_ERROR`, set `rx_armed = 0`, `testAppState` to `TA_WAIT_POLL`, and `inst->done = 1`.
+
+If `message` is `DWT_SIG_RX_OKAY`, cast `rx_buffer` to `Ranging_Frame *`. Accept the frame only when `fc == FC_POLL`, destination is `{0x02, 0x00}`, and source is `{0x01, 0x00}`. Any other frame sets `rx_armed = 0` and goes back to `TA_WAIT_POLL`.
+
+On a good poll, read `dwt_readrxtimestamp()` into 5 bytes and pack them little-endian into `poll_rx_ts`, the same loop as step 4. Do this before any transmit. Then schedule the response about 3000 µs-units later:
 
 ```text
-Ra = response_rx - poll_tx
-Da = final_tx - response_rx
-Rb = final_rx - response_tx
-Db = response_tx - poll_rx
-tof = (Ra * Rb - Da * Db) / (Ra + Rb + Da + Db)
-distance_m = tof * 299702547 / 499200000 / 128
+resp_tx_time = poll_rx_ts + (3000 * 65536)
+delayed32    = (resp_tx_time >> 8) & 0xFFFFFFFE
+dwt_setdelayedtrxtime(delayed32)
 ```
 
-`499.2e6 * 128` is the DW1000 timestamp rate. Use 64-bit integer math. Print one UART line from the responder with `port_tx_msg`.
+Fill `resp_msg`. `ctrl1`, `ctrl2`, and `PAN_id` are already set.
+
+- `seq_num = frame_sn++`
+- `dst` = `{0x01, 0x00}` (initiator)
+- `src` = `{0x02, 0x00}` (responder)
+- `fc` = `FC_RESPONSE`
+
+Set `testAppState` to `TA_TX_RESP` and `inst->done = 1`.
+
+**`TA_TX_RESP`**
+
+Arm the receiver for the final, then send:
+
+- `dwt_setrxaftertxdelay(300)`
+- `dwt_setrxtimeout(5000)`
+- `dwt_writetxdata(sizeof(resp_msg), (uint8 *)&resp_msg, 0)`
+- `dwt_writetxfctrl(sizeof(resp_msg), 0, 1)`
+- `status = dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED)`
+
+`DWT_RESPONSE_EXPECTED` turns the receiver on after the response. `TA_WAIT_FINAL` must not call `dwt_rxenable` as well.
+
+If `status` is not `DWT_SUCCESS`, the scheduled time was already in the past. Set `rx_armed = 0` and `testAppState` to `TA_WAIT_POLL`.
+
+If it succeeds, set `testAppState` to `TA_WAIT_FINAL`. Set `inst->done = 1` either way. Do not add the initiator's 100 ms pause here. The responder goes straight back to listening after the exchange.
+
+**`TA_WAIT_FINAL`**
+
+If `message` is 0, stay in `TA_WAIT_FINAL` and set `inst->done = 1`.
+
+If `message` is `DWT_SIG_RX_TIMEOUT` or `DWT_SIG_RX_ERROR`, set `rx_armed = 0`, `testAppState` to `TA_WAIT_POLL`, and `inst->done = 1`.
+
+If `message` is `DWT_SIG_RX_OKAY`, accept the frame only when `fc == FC_FINAL`, destination is `{0x02, 0x00}`, and source is `{0x01, 0x00}`. The header matches `Ranging_Frame`, so that cast still sees `fc`, `dst`, and `src`. The 15 timestamp bytes belong to `Ranging_Frame_Final`: `timestamps[0]` is `poll_tx`, `[5]` is `resp_rx`, `[10]` is `final_tx`. Pack each group of 5 little-endian bytes into a `uint64_t`. A frame that fails the check goes back to `TA_WAIT_POLL` with `rx_armed = 0`.
+
+On a good final, read the two local timestamps before any new receive or transmit:
+
+- `dwt_readtxtimestamp()` into `resp_tx_ts`. This is the actual response departure still sitting in the TX timestamp register, including the antenna delay once step 6 programs it.
+- `dwt_readrxtimestamp()` into `final_rx_ts`.
+
+Every subtraction is 40-bit. Mask after the subtract:
+
+```text
+dt(a, b) = (a - b) & TS_MASK
+Ra = dt(resp_rx, poll_tx)     from the final payload
+Da = dt(final_tx, resp_rx)    from the final payload
+Rb = dt(final_rx, resp_tx)    local
+Db = dt(resp_tx, poll_rx)     local
+```
+
+Then, in `int64_t`:
+
+```text
+tof = (Ra * Rb - Da * Db) / (Ra + Rb + Da + Db)
+distance_mm = tof * 299702547 / 63897600
+```
+
+`63897600` is `499200000 * 128 / 1000`, so the result is millimetres. The division truncates. With antenna delay still 0, the number carries a fixed offset and can be negative at short range. Print that signed value. If the denominator is 0, skip the print and go back to `TA_WAIT_POLL`.
+
+Print with an integer format. `sprintf` is already linked by the command parser. `%f` pulls in the float printer and can use up the remaining flash.
+
+```text
+sprintf(buf, "%ld\r\n", (long)distance_mm);
+port_tx_msg(buf, n);
+```
+
+Then set `rx_armed = 0`, `testAppState` to `TA_WAIT_POLL`, and `inst->done = 1`.
 
 ## Step 6 — antenna delay
 

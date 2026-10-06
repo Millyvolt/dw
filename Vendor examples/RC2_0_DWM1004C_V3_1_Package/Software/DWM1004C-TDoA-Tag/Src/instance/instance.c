@@ -32,7 +32,7 @@ LOWPOWER_RESTART_TIME. So LOWPOWER_RESTART_TIME is configured as 15 */
 
 
 /* DW1000 device variables */
-static dwt_txconfig_t tx_cfg;
+//static dwt_txconfig_t tx_cfg;
 static ref_values_t ref = {0};
 
 enum inst_states
@@ -183,9 +183,10 @@ void instancesettagaddress(instance_data_t *inst)
  * @brief the main instance state machine (only supports TDoA Tag function)
  *
  * */
-int testapprun(instance_data_t *inst, int message)
+int testapprun_int(instance_data_t *inst, int message)
 {
-	param_block_t * pbss = get_pbssConfig();
+//	param_block_t * pbss = get_pbssConfig();
+
     switch (inst->testAppState)
     {
         case TA_INIT :
@@ -200,17 +201,18 @@ int testapprun(instance_data_t *inst, int message)
 
         case TA_TX_POLL:
 
-        	poll_msg.seq_num = frame_sn++;
-        	poll_msg.dst[0] = 0;
-        	poll_msg.dst[1] = 2;
-        	poll_msg.src[0] = 0;
-        	poll_msg.src[1] = 1;
-        	poll_msg.fc = FC_POLL;
+        	inst->poll_msg.seq_num = inst->frame_sn++;
+        	inst->poll_msg.dst[0] = 2;
+        	inst->poll_msg.dst[1] = 0;
+        	inst->poll_msg.src[0] = 1;
+        	inst->poll_msg.src[1] = 0;
+        	inst->poll_msg.fc = FC_POLL;
 
-        	dwt_writetxdata(sizeof(poll_msg), (uint8_t *)&poll_msg, 0);
-        	dwt_writetxfctrl(sizeof(poll_msg), 0, 1);
+        	dwt_writetxdata(sizeof( inst->poll_msg), (uint8_t *)&inst->poll_msg, 0);
+        	dwt_writetxfctrl(sizeof(inst->poll_msg), 0, 1);
         	dwt_setrxaftertxdelay(300);
         	dwt_setrxtimeout(5000);
+        	dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
 
             inst->testAppState = TA_WAIT_RESP;
         	inst->done = 1;
@@ -218,6 +220,7 @@ int testapprun(instance_data_t *inst, int message)
             break;
 
         case TA_WAIT_RESP:
+
             /* Do temperature and voltage compensation and get the values of tx_cfg */
             /* the right way:
              * read T and V
@@ -235,13 +238,87 @@ int testapprun(instance_data_t *inst, int message)
 
 //            dwt_starttx(DWT_START_TX_IMMEDIATE); //always using immediate TX
 
-//            inst->testAppState = TA_WAIT_RESP;
+        	if(message == 0){
+
+        		inst->testAppState = TA_WAIT_RESP;
+        		inst->done = 1;
+        		break;
+        	}
+        	else if(message == DWT_SIG_RX_OKAY){
+
+        		// parce rx_buffer
+        		Ranging_Frame * rf = (Ranging_Frame *)instance_data.rx_buffer;
+
+        		if(rf->fc==FC_RESPONSE && rf->dst[0]==1 && rf->dst[1]==0 && rf->src[0]==2 && rf->src[1]==0)
+        		{
+        			//response ok
+        			uint8_t buf[5];
+        			dwt_readtxtimestamp(buf);
+        			inst->poll_tx_ts = 0;
+        			for(int i=0; i < 5; ++i) {
+        				inst->poll_tx_ts += (uint64_t)buf[i] << 8 * i;
+        				inst->final_msg.timestamps[i] = buf[i];
+        			}
+//        			inst->poll_tx_ts &= TS_MASK;
+
+        			dwt_readrxtimestamp(buf);
+        			inst->resp_rx_ts = 0;
+        			for(int i=0; i < 5; ++i){
+        				inst->resp_rx_ts += (uint64_t)buf[i] << 8 * i;
+        				inst->final_msg.timestamps[i + 5] = buf[i];
+        			}
+//        			inst->resp_rx_ts &= TS_MASK;
+
+        			uint64_t final_tx_time = inst->resp_rx_ts + (3000ULL * 65536ULL);
+        			uint32_t delayed32 = (final_tx_time >> 8) & 0xFFFFFFFEUL;
+        			dwt_setdelayedtrxtime(delayed32);
+        			inst->final_tx_ts = ((uint64_t)delayed32 << 8) + 0;   /* antenna delay stays 0 until step 6 */
+
+        			inst->final_msg.seq_num = inst->frame_sn++;
+        			inst->final_msg.dst[0] = 2; inst->final_msg.dst[1] = 0;
+        			inst->final_msg.src[0] = 1; inst->final_msg.src[1] = 0;
+        			inst->final_msg.fc = FC_FINAL;
+
+        			for(int i=0; i < 5; ++i){
+        				inst->final_msg.timestamps[i + 10] = ( inst->final_tx_ts >> 8 * i ) & 0xFF;
+        			}
+
+        			inst->testAppState = TA_TX_FINAL;
+        		}
+        		else
+        		{
+        			//response error
+        			inst->testAppState = TA_TX_POLL;
+        			inst->done = 1;
+        		}
+        	}
+        	else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
+
+        		inst->testAppState = TA_TX_POLL;
+        		inst->done = 1;
+        	}
+
         	inst->done = 1;
 
             break;
 
         case TA_TX_FINAL:
-        	inst->done = 1;
+
+        	dwt_writetxdata(sizeof(inst->final_msg), (uint8_t *)&inst->final_msg, 0);
+        	dwt_writetxfctrl(sizeof(inst->final_msg), 0, 1);
+        	int status = dwt_starttx(DWT_START_TX_DELAYED);
+        	if(status == DWT_SUCCESS){
+        		uint32_t start = portGetTickCount();
+        		while(portGetTickCount() - start < 100) ;
+        	}
+
+        		inst->testAppState = TA_TX_POLL;
+        		inst->done = 1;
+//        	else{
+//        		inst->testAppState = TA_TX_POLL;
+//        		inst->done = 1;
+//        	}
+
         	break;
 
         case TA_WAIT_POLL:
@@ -261,7 +338,22 @@ int testapprun(instance_data_t *inst, int message)
     } // end switch on testAppState
 
     return inst->done;
-} // end testapprun()
+}
+
+int testapprun_rsp(instance_data_t *inst, int message)
+{
+	switch (inst->testAppState)
+	    {
+	        case TA_INIT :
+
+	        	break;
+
+	        default:
+	        	break;
+	    }
+
+    return inst->done;
+}
 
 // -----------------------------------------------------------------------------
 
@@ -450,7 +542,12 @@ int instance_run(void)
     while(!done)
     {
         // run the communications application
-        done = testapprun(&instance_data, message) ;
+		#if defined TWR_ROLE == TWR_INT
+    	done = testapprun_int(&instance_data, message) ;
+		#elif defined TWR_ROLE == TWR_RSP
+    	done = testapprun_rsp(&instance_data, message) ;
+		#endif
+
 
         if(message) // there was an event in the buffer
         {
@@ -475,8 +572,11 @@ int instance_run(void)
 
     }
 
-    /* we have sent the message and in sleep and need to timeout (Tag needs to
-       send another blink after some time) */
+
+    // below code is never calling. If it will be used, low_power() function calls
+    // need to be replaced, because STM32 should not sleep
+
+    /* we have sent the message and in sleep and need to timeout (Tag needs to send another blink after some time) */
     if(done == 2)
     {
 
@@ -531,6 +631,8 @@ int instance_run(void)
                  = DWT_SIG_RX_TIMEOUT;
         }
     }
+
+
     return 0;
 }
 

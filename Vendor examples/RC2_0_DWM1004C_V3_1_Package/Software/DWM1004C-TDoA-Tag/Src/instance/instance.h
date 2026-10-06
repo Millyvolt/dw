@@ -27,8 +27,8 @@ extern "C" {
 #define TWR_INT	0
 #define TWR_RSP	1
 
-#define TWR_ROLE	TWR_INT
-//#define TWR_ROLE	TWR_RSP
+//#define TWR_ROLE	TWR_INT
+#define TWR_ROLE	TWR_RSP
 
 #define TS_MASK		0xFFFFFFFFFFULL		// select 40 bits in 64 bits word
 
@@ -95,7 +95,8 @@ void instance_config(param_block_t *config) ;
 // returns indication of status report change
 int instance_run(void) ;
 
-int testapprun(instance_data_t *inst, int message);
+int testapprun_int(instance_data_t *inst, int message);
+int testapprun_rsp(instance_data_t *inst, int message);
 uint32 ulong2littleEndian(uint32);
 void instancesettagaddress(instance_data_t *inst);
 void instance_txcallback(const dwt_cb_data_t *txd);

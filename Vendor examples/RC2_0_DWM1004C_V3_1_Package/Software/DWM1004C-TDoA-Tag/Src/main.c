@@ -248,6 +248,7 @@ int main(void)
   /*
    * need to null fields in Ranging_Frame structs objects
    * testapprun() func contains not valid code for now
+   * do i need to using temperature compensation (case TA_WAIT_RESP:) ?
    *
    */
 

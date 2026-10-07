@@ -4,7 +4,7 @@ You edit `Vendor examples/RC2_0_DWM1004C_V3_1_Package/Software/DWM1004C-TDoA-Tag
 
 Same binary shape on both modules. One `#define` selects initiator or responder. Radio settings stay the ones already in `Src/config/default_config.h`: channel 2, 64 MHz PRF, 128-symbol preamble, 6.8 Mbps. Both modules must match.
 
-Status: steps 1, 2, 3, and 4 reviewed and accepted. The role macros in the code are `TWR_INT` and `TWR_RSP`.
+Status: steps 1 through 5 reviewed and accepted. The UART distance line is deferred. The role macros in the code are `TWR_INT` and `TWR_RSP`.
 
 ```mermaid
 sequenceDiagram
@@ -245,6 +245,8 @@ Rb = dt(final_rx, resp_tx)    local
 Db = dt(resp_tx, poll_rx)     local
 ```
 
+Store `Ra`, `Rb`, `Da`, and `Db` as `int64_t` after that masked subtract: `int64_t Ra = (int64_t)((resp_rx - poll_tx) & TS_MASK);`. The raw timestamps stay `uint64_t`. The mask runs on the unsigned subtract, then the cast makes the product signed, so a negative `tof` stays negative. With the 3000 µs reply, each interval is about 28 bits and the product fits in `int64_t`.
+
 Then, in `int64_t`:
 
 ```text
@@ -252,20 +254,51 @@ tof = (Ra * Rb - Da * Db) / (Ra + Rb + Da + Db)
 distance_mm = tof * 299702547 / 63897600
 ```
 
-`63897600` is `499200000 * 128 / 1000`, so the result is millimetres. The division truncates. With antenna delay still 0, the number carries a fixed offset and can be negative at short range. Print that signed value. If the denominator is 0, skip the print and go back to `TA_WAIT_POLL`.
+`63897600` is `499200000 * 128 / 1000`, so the result is millimetres. The division truncates. With antenna delay still 0, the number carries a fixed offset and can be negative at short range. Keep that signed value. If the denominator is 0, skip the division and go back to `TA_WAIT_POLL`.
 
-Print with an integer format. `sprintf` is already linked by the command parser. `%f` pulls in the float printer and can use up the remaining flash.
-
-```text
-sprintf(buf, "%ld\r\n", (long)distance_mm);
-port_tx_msg(buf, n);
-```
+The UART line is deferred. Compute `distance_mm` and keep it. When a print is added later, use an integer format. `sprintf` is already linked by the command parser. `%f` pulls in the float printer and can use up the remaining flash.
 
 Then set `rx_armed = 0`, `testAppState` to `TA_WAIT_POLL`, and `inst->done = 1`.
 
 ## Step 6 — antenna delay
 
-Before the loop, read the channel-2 antenna delay from OTP address `0x01C`, bytes [3:2], and call `dwt_settxantennadelay` and `dwt_setrxantennadelay` with that value. Channel 5 is bytes [1:0] at the same address. A constant offset that remains is a calibration error, not a formula error.
+Do this in both images. One place covers both roles: the end of `instance_config()`, after `dwt_configure()`. `instance.c` already includes `tvc.h`, and that header defines `OTP_ANT_DLY` as `0x1C`.
+
+`tvc_otp_read_txcfgref()` already reads this word into `ref.antdly`, but only when all five OTP words pass `OTP_VALID`. Read `0x1C` directly so a bad TX-power word does not throw away a good antenna delay:
+
+```text
+uint32_t word = 0;
+dwt_otpread(OTP_ANT_DLY, &word, 1);
+```
+
+The word holds two 16-bit delays. This image is channel 2 (`DEFAULT_CHANNEL`), so take the high half. Channel 5 would take the low half.
+
+```text
+uint16_t dly = 0;
+if (pbss->dwt_config.chan == 2)
+    dly = (word >> 16) & 0xFFFF;
+else if (pbss->dwt_config.chan == 5)
+    dly = word & 0xFFFF;
+```
+
+A zero half means that channel was not programmed. Leave the delay registers at 0 in that case. Otherwise write the same value to both antennas. Do not halve it, and do not use the `rfDelays[]` table. That table is a different constant.
+
+```text
+dwt_settxantennadelay(dly);
+dwt_setrxantennadelay(dly);
+```
+
+Keep `dly` in a file-scope `static uint16_t tx_ant_dly` so the initiator can see it. Each module programs its own OTP value.
+
+`dwt_readtxtimestamp()` and `dwt_readrxtimestamp()` then return times that already include this delay. The poll and response timestamps copied from those registers need no extra add. The responder's `resp_tx` is also a register read, so the responder formula stays as it is.
+
+The final's departure time is predicted, not read back. In `TA_WAIT_RESP`, replace the `+ 0`:
+
+```text
+inst->final_tx = ((uint64_t)delayed32 << 8) + tx_ant_dly;
+```
+
+That is the only ranging line that changes. A constant offset that remains after this is a calibration error, not a formula error.
 
 ## Step 7 — callbacks
 

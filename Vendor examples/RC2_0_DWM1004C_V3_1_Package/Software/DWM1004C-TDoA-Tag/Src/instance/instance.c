@@ -35,6 +35,8 @@ LOWPOWER_RESTART_TIME. So LOWPOWER_RESTART_TIME is configured as 15 */
 //static dwt_txconfig_t tx_cfg;
 static ref_values_t ref = {0};
 
+static bool rx_armed = false;
+
 enum inst_states
 {
    TA_INIT,
@@ -190,12 +192,8 @@ int testapprun_int(instance_data_t *inst, int message)
     switch (inst->testAppState)
     {
         case TA_INIT :
-//            instancesettagaddress(inst);
-            //configure the on wake parameters (upload the IC config settings)
-//            dwt_configuresleep(AON_WCFG_ONW_RADC | DWT_PRESRV_SLEEP| DWT_CONFIG,
-//                               DWT_WAKE_CS|DWT_SLP_EN);
 
-            inst->testAppState = TWR_ROLE == TWR_INT ? TA_TX_POLL : (TWR_ROLE == TWR_RSP ? TA_WAIT_POLL : TA_INIT) ;
+        	inst->testAppState = TA_TX_POLL;
 
             break;
 
@@ -254,25 +252,23 @@ int testapprun_int(instance_data_t *inst, int message)
         			//response ok
         			uint8_t buf[5];
         			dwt_readtxtimestamp(buf);
-        			inst->poll_tx_ts = 0;
+        			inst->poll_tx = 0;
         			for(int i=0; i < 5; ++i) {
-        				inst->poll_tx_ts += (uint64_t)buf[i] << 8 * i;
+        				inst->poll_tx += (uint64_t)buf[i] << 8 * i;
         				inst->final_msg.timestamps[i] = buf[i];
         			}
-//        			inst->poll_tx_ts &= TS_MASK;
 
         			dwt_readrxtimestamp(buf);
-        			inst->resp_rx_ts = 0;
+        			inst->resp_rx = 0;
         			for(int i=0; i < 5; ++i){
-        				inst->resp_rx_ts += (uint64_t)buf[i] << 8 * i;
+        				inst->resp_rx += (uint64_t)buf[i] << 8 * i;
         				inst->final_msg.timestamps[i + 5] = buf[i];
         			}
-//        			inst->resp_rx_ts &= TS_MASK;
 
-        			uint64_t final_tx_time = inst->resp_rx_ts + (3000ULL * 65536ULL);
+        			uint64_t final_tx_time = inst->resp_rx + (3000ULL * 65536ULL);
         			uint32_t delayed32 = (final_tx_time >> 8) & 0xFFFFFFFEUL;
         			dwt_setdelayedtrxtime(delayed32);
-        			inst->final_tx_ts = ((uint64_t)delayed32 << 8) + 0;   /* antenna delay stays 0 until step 6 */
+        			inst->final_tx = ((uint64_t)delayed32 << 8) + 0;   /* antenna delay stays 0 until step 6 */
 
         			inst->final_msg.seq_num = inst->frame_sn++;
         			inst->final_msg.dst[0] = 2; inst->final_msg.dst[1] = 0;
@@ -280,7 +276,7 @@ int testapprun_int(instance_data_t *inst, int message)
         			inst->final_msg.fc = FC_FINAL;
 
         			for(int i=0; i < 5; ++i){
-        				inst->final_msg.timestamps[i + 10] = ( inst->final_tx_ts >> 8 * i ) & 0xFF;
+        				inst->final_msg.timestamps[i + 10] = ( inst->final_tx >> 8 * i ) & 0xFF;
         			}
 
         			inst->testAppState = TA_TX_FINAL;
@@ -306,7 +302,8 @@ int testapprun_int(instance_data_t *inst, int message)
 
         	dwt_writetxdata(sizeof(inst->final_msg), (uint8_t *)&inst->final_msg, 0);
         	dwt_writetxfctrl(sizeof(inst->final_msg), 0, 1);
-        	int status = dwt_starttx(DWT_START_TX_DELAYED);
+        	int status =
+        			dwt_starttx(DWT_START_TX_DELAYED);
         	if(status == DWT_SUCCESS){
         		uint32_t start = portGetTickCount();
         		while(portGetTickCount() - start < 100) ;
@@ -314,28 +311,12 @@ int testapprun_int(instance_data_t *inst, int message)
 
         		inst->testAppState = TA_TX_POLL;
         		inst->done = 1;
-//        	else{
-//        		inst->testAppState = TA_TX_POLL;
-//        		inst->done = 1;
-//        	}
 
-        	break;
-
-        case TA_WAIT_POLL:
-        	inst->done = 1;
-        	break;
-
-        case TA_TX_RESP:
-        	inst->done = 1;
-        	break;
-
-        case TA_WAIT_FINAL:
-        	inst->done = 1;
         	break;
 
         default:
             break;
-    } // end switch on testAppState
+    }
 
     return inst->done;
 }
@@ -343,17 +324,154 @@ int testapprun_int(instance_data_t *inst, int message)
 int testapprun_rsp(instance_data_t *inst, int message)
 {
 	switch (inst->testAppState)
-	    {
-	        case TA_INIT :
+	{
+	case TA_INIT :
 
-	        	break;
+		inst->testAppState = TA_WAIT_POLL;
 
-	        default:
-	        	break;
-	    }
+		break;
 
-    return inst->done;
+	case TA_WAIT_POLL:
+
+		if(message == 0){
+			if(rx_armed == false){
+				dwt_setrxtimeout(0);
+				dwt_rxenable(DWT_START_RX_IMMEDIATE);
+				rx_armed = 1;
+			}
+
+			inst->done = 1;
+		}
+		else if(message == DWT_SIG_RX_OKAY){
+
+			// parce rx_buffer
+			Ranging_Frame * rf = (Ranging_Frame*)instance_data.rx_buffer;
+
+			if(rf->fc==FC_POLL && rf->dst[0]==2 && rf->dst[1]==0 && rf->src[0]==1 && rf->src[1]==0)
+			{
+				uint8_t buf[5];
+				dwt_readrxtimestamp(buf);
+				inst->poll_rx = 0;
+				for(int i=0; i < 5; ++i){
+					inst->poll_rx += (uint64_t)buf[i] << 8 * i;
+				}
+
+				uint64_t resp_tx_time = inst->poll_rx + (3000 * 65536);
+				uint32_t delayed32    = (resp_tx_time >> 8) & 0xFFFFFFFE;
+				dwt_setdelayedtrxtime(delayed32);
+
+				inst->resp_msg.seq_num = inst->frame_sn++;
+				inst->resp_msg.dst[0] = 1; inst->resp_msg.dst[1] = 0;
+				inst->resp_msg.src[0] = 2; inst->resp_msg.src[1] = 0;
+				inst->resp_msg.fc = FC_RESPONSE;
+
+				inst->testAppState = TA_TX_RESP;
+				inst->done = 1;
+			}
+			else
+			{
+				rx_armed = false;
+			}
+		}
+		else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
+			rx_armed = false;
+			inst->done = 1;
+		}
+
+		break;
+
+	case TA_TX_RESP:
+
+		dwt_setrxaftertxdelay(300);
+		dwt_setrxtimeout(5000);
+		dwt_writetxdata(sizeof(inst->resp_msg), (uint8 *)&inst->resp_msg, 0);
+		dwt_writetxfctrl(sizeof(inst->resp_msg), 0, 1);
+
+		int status =
+		dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+		if(status == DWT_SUCCESS){
+			inst->testAppState = TA_WAIT_FINAL;
+		}
+		else{
+			rx_armed = 0;
+			inst->testAppState = TA_WAIT_POLL;
+		}
+
+		inst->done = 1;
+
+		break;
+
+    case TA_WAIT_FINAL:
+
+    	if(message == 0){
+    		inst->done = 1;
+    	}
+    	else if(message == DWT_SIG_RX_OKAY){
+
+			// parce rx_buffer
+			Ranging_Frame_Final * rff = (Ranging_Frame_Final *)instance_data.rx_buffer;
+
+			if(rff->fc==FC_FINAL && rff->dst[0]==2 && rff->dst[1]==0 && rff->src[0]==1 && rff->src[1]==0)
+			{
+				uint8_t buf[5];
+
+				dwt_readtxtimestamp(buf);
+				inst->resp_tx = 0;
+				for(int i=0; i < 5; ++i){
+					inst->resp_tx += (uint64_t)buf[i] << 8 * i;
+				}
+				dwt_readrxtimestamp(buf);
+				inst->final_rx = 0;
+				for(int i=0; i < 5; ++i){
+					inst->final_rx += (uint64_t)buf[i] << 8 * i;
+				}
+
+				inst->poll_tx = 0; inst->resp_rx = 0; inst->final_tx = 0;
+				for (int i = 0; i < 5; i++) {
+					inst->poll_tx  |= (uint64_t)rff->timestamps[i]      << (8 * i);
+					inst->resp_rx  |= (uint64_t)rff->timestamps[i + 5]  << (8 * i);
+					inst->final_tx |= (uint64_t)rff->timestamps[i + 10] << (8 * i);
+				}
+
+				int64_t Ra = (int64_t)((inst->resp_rx  - inst->poll_tx) & TS_MASK);
+				int64_t Da = (int64_t)((inst->final_tx - inst->resp_rx) & TS_MASK);
+				int64_t Rb = (int64_t)((inst->final_rx - inst->resp_tx) & TS_MASK);
+				int64_t Db = (int64_t)((inst->resp_tx  - inst->poll_rx) & TS_MASK);
+
+				int64_t tof = (Ra * Rb - Da * Db) / (Ra + Rb + Da + Db);
+				int64_t distance_mm = tof * 299702547 / 63897600; (void)distance_mm;
+
+				rx_armed = 0;
+				inst->testAppState = TA_WAIT_POLL;
+				inst->done = 1;
+			}
+			else
+			{
+				inst->testAppState = TA_WAIT_POLL;
+				rx_armed = false;
+			}
+
+    	}
+    	else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
+    		rx_armed = false;
+    		inst->testAppState = TA_WAIT_POLL;
+    		inst->done = 1;
+    	}
+
+
+    	break;
+
+	default:
+
+		break;
+
+	}
+
+
+	return inst->done;
 }
+
+
 
 // -----------------------------------------------------------------------------
 
@@ -412,12 +530,12 @@ int instance_init(int sleep_enable)
     instance_data.event[1] = 0;
     instance_data.eventCnt = 0;
 
-	instance_data.poll_tx_ts = 0;
-	instance_data.poll_rx_ts = 0;
-	instance_data.resp_tx_ts = 0;
-	instance_data.resp_rx_ts = 0;
-	instance_data.final_tx_ts = 0;
-	instance_data.final_rx_ts = 0;
+	instance_data.poll_tx = 0;
+	instance_data.poll_rx = 0;
+	instance_data.resp_tx = 0;
+	instance_data.resp_rx = 0;
+	instance_data.final_tx = 0;
+	instance_data.final_rx = 0;
 
     return 0 ;
 }
@@ -542,9 +660,9 @@ int instance_run(void)
     while(!done)
     {
         // run the communications application
-		#if defined TWR_ROLE == TWR_INT
+		#if TWR_ROLE == TWR_INT
     	done = testapprun_int(&instance_data, message) ;
-		#elif defined TWR_ROLE == TWR_RSP
+		#elif TWR_ROLE == TWR_RSP
     	done = testapprun_rsp(&instance_data, message) ;
 		#endif
 

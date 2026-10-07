@@ -69,12 +69,12 @@ typedef struct
     uint32        timeout;
     uint16_t chipSleep; // The DW1000 sleep duration
 
-    uint64_t poll_tx_ts;
-    uint64_t poll_rx_ts;
-    uint64_t resp_tx_ts;
-    uint64_t resp_rx_ts;
-    uint64_t final_tx_ts;
-    uint64_t final_rx_ts;
+    uint64_t poll_tx;
+    uint64_t poll_rx;
+    uint64_t resp_tx;
+    uint64_t resp_rx;
+    uint64_t final_tx;
+    uint64_t final_rx;
 
     Ranging_Frame poll_msg;
     Ranging_Frame resp_msg;

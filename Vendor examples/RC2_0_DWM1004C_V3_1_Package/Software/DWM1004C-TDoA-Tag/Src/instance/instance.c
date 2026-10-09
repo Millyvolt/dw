@@ -36,6 +36,9 @@ LOWPOWER_RESTART_TIME. So LOWPOWER_RESTART_TIME is configured as 15 */
 static ref_values_t ref = {0};
 
 static bool rx_armed = false;
+static uint16_t tx_ant_delay = 0;
+static volatile int64_t distance_mm = 0;
+
 
 enum inst_states
 {
@@ -239,8 +242,6 @@ int testapprun_int(instance_data_t *inst, int message)
         	if(message == 0){
 
         		inst->testAppState = TA_WAIT_RESP;
-        		inst->done = 1;
-        		break;
         	}
         	else if(message == DWT_SIG_RX_OKAY){
 
@@ -268,7 +269,7 @@ int testapprun_int(instance_data_t *inst, int message)
         			uint64_t final_tx_time = inst->resp_rx + (3000ULL * 65536ULL);
         			uint32_t delayed32 = (final_tx_time >> 8) & 0xFFFFFFFEUL;
         			dwt_setdelayedtrxtime(delayed32);
-        			inst->final_tx = ((uint64_t)delayed32 << 8) + 0;   /* antenna delay stays 0 until step 6 */
+        			inst->final_tx = ((uint64_t)delayed32 << 8) + tx_ant_delay;
 
         			inst->final_msg.seq_num = inst->frame_sn++;
         			inst->final_msg.dst[0] = 2; inst->final_msg.dst[1] = 0;
@@ -285,13 +286,11 @@ int testapprun_int(instance_data_t *inst, int message)
         		{
         			//response error
         			inst->testAppState = TA_TX_POLL;
-        			inst->done = 1;
         		}
         	}
         	else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
 
         		inst->testAppState = TA_TX_POLL;
-        		inst->done = 1;
         	}
 
         	inst->done = 1;
@@ -340,7 +339,7 @@ int testapprun_rsp(instance_data_t *inst, int message)
 				rx_armed = 1;
 			}
 
-			inst->done = 1;
+			// inst->done = 1;
 		}
 		else if(message == DWT_SIG_RX_OKAY){
 
@@ -366,7 +365,7 @@ int testapprun_rsp(instance_data_t *inst, int message)
 				inst->resp_msg.fc = FC_RESPONSE;
 
 				inst->testAppState = TA_TX_RESP;
-				inst->done = 1;
+				// inst->done = 1;
 			}
 			else
 			{
@@ -375,8 +374,10 @@ int testapprun_rsp(instance_data_t *inst, int message)
 		}
 		else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
 			rx_armed = false;
-			inst->done = 1;
+			// inst->done = 1;
 		}
+
+        inst->done = 1;
 
 		break;
 
@@ -438,8 +439,13 @@ int testapprun_rsp(instance_data_t *inst, int message)
 				int64_t Rb = (int64_t)((inst->final_rx - inst->resp_tx) & TS_MASK);
 				int64_t Db = (int64_t)((inst->resp_tx  - inst->poll_rx) & TS_MASK);
 
-				int64_t tof = (Ra * Rb - Da * Db) / (Ra + Rb + Da + Db);
-				int64_t distance_mm = tof * 299702547 / 63897600; (void)distance_mm;
+				int64_t sum = (Ra + Rb + Da + Db), tof = 0;
+				if(sum != 0)
+					tof = (Ra * Rb - Da * Db) / sum;
+				else
+					;	//distance_mm = 0;
+				distance_mm = tof * 299702547 / 63897600;
+				(void)distance_mm;
 
 				rx_armed = 0;
 				inst->testAppState = TA_WAIT_POLL;
@@ -524,6 +530,10 @@ int instance_init(int sleep_enable)
                      instance_rxtimeout,
                      instance_rxerror);
 
+    dwt_setinterrupt(DWT_INT_RFCG | DWT_INT_RFTO | DWT_INT_RXPTO |
+    		DWT_INT_RPHE | DWT_INT_RFCE | DWT_INT_RFSL | DWT_INT_SFDT, 1);
+
+
     instance_data.frame_sn = 0;
     instance_data.timeron = 0;
     instance_data.event[0] = 0;
@@ -565,6 +575,18 @@ void instance_config(param_block_t * pbss)
         configTx.power = (pow << 24) + (pow << 16) + (pow << 8) + pow;
     }
     dwt_configuretxrf(&configTx);
+
+
+    uint32_t word = 0;
+    dwt_otpread(OTP_ANT_DLY, &word, 1);
+    uint16_t delay = 0;
+    if (pbss->dwt_config.chan == 2)
+    	delay = (word >> 16) & 0xFFFF;
+    else if (pbss->dwt_config.chan == 5)
+    	delay = word & 0xFFFF;
+    tx_ant_delay = delay;
+    dwt_settxantennadelay(delay);
+    dwt_setrxantennadelay(delay);
 }
 /**
  * @fn  instance_txcallback
@@ -573,7 +595,7 @@ void instance_config(param_block_t * pbss)
  * */
 void instance_txcallback(const dwt_cb_data_t *txd)
 {
-    //empty function
+	(void)txd;
 }
 
 /**
@@ -583,7 +605,12 @@ void instance_txcallback(const dwt_cb_data_t *txd)
  * */
 void instance_rxgood(const dwt_cb_data_t *rxd)
 {
-   //empty function
+	uint16_t len = rxd->datalength;
+	if (len > sizeof(instance_data.rx_buffer))
+		len = sizeof(instance_data.rx_buffer);
+	dwt_readrxdata(instance_data.rx_buffer, len, 0);
+	if (instance_data.eventCnt < 2)
+		instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_OKAY;
 }
 
 /**
@@ -593,7 +620,9 @@ void instance_rxgood(const dwt_cb_data_t *rxd)
  * */
 void instance_rxtimeout(const dwt_cb_data_t *rxd)
 {
-    //empty function
+	(void)rxd;
+	if (instance_data.eventCnt < 2)
+		instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_TIMEOUT;
 }
 
 /**
@@ -603,7 +632,9 @@ void instance_rxtimeout(const dwt_cb_data_t *rxd)
  * */
 void instance_rxerror(const dwt_cb_data_t *rxd)
 {
-    //empty function
+	(void)rxd;
+	if (instance_data.eventCnt < 2)
+		instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_ERROR;
 }
 
 /**
@@ -657,6 +688,16 @@ int instance_run(void)
 
     param_block_t *pbss = get_pbssConfig();
 
+
+    		//debug
+//            static volatile uint32 reg32 = 0, bp = 0;
+//            reg32 = dwt_read32bitreg(0x0E);
+//            reg32 = dwt_read32bitreg(0x0F);
+//            reg32 = dwt_readdevid();
+//            (void)reg32;
+//            ++bp;
+
+
     while(!done)
     {
         // run the communications application
@@ -691,7 +732,7 @@ int instance_run(void)
     }
 
 
-    // below code is never calling. If it will be used, low_power() function calls
+    // below code now is never calling. If it will be used, low_power() function calls
     // need to be replaced, because STM32 should not sleep
 
     /* we have sent the message and in sleep and need to timeout (Tag needs to send another blink after some time) */

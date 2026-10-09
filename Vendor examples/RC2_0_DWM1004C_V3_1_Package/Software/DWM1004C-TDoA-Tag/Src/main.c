@@ -119,7 +119,7 @@ app_cfg_t app;
 int inittestapplication(void)
 {
    int32_t result = 0;
-   int devID; // Decawave Device ID
+   static volatile int devID; // Decawave Device ID
    decaIrqStatus_t a;
 
    /* Disable ScenSor (EXT_IRQ) before starting */
@@ -129,6 +129,7 @@ int inittestapplication(void)
    // Read Decawave chip ID
 
    devID = dwt_readdevid();
+
 
    if(DWT_DEVICE_ID != devID)
    {
@@ -210,6 +211,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_RTC_Init();
+
   MX_CRC_Init();
   /* USER CODE BEGIN 2 */
 
@@ -244,10 +246,11 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
+
+
   // NOTES TO DO
   /*
-   * need to null fields in Ranging_Frame structs objects
-   * testapprun() func contains not valid code for now
+   * need to null fields in Ranging_Frame structs objects ?
    * do i need to using temperature compensation (case TA_WAIT_RESP:) ?
    *
    */
@@ -263,6 +266,15 @@ int main(void)
 
 	  //ACCELEROMETER
 //	  vTestModeMotionDetect();
+
+	   //debug
+	   static volatile uint32 reg32 = 0, bp = 0;
+	   reg32 = dwt_read32bitreg(0x0E);
+	   reg32 = dwt_read32bitreg(0x0F);
+	   reg32 = 0;
+	   reg32 = dwt_readdevid();
+	   (void)reg32;
+	   ++bp;
 
       if( deca_uart_rx_data_ready() )
       {

@@ -4,7 +4,7 @@ You edit `Vendor examples/RC2_0_DWM1004C_V3_1_Package/Software/DWM1004C-TDoA-Tag
 
 Same binary shape on both modules. One `#define` selects initiator or responder. Radio settings stay the ones already in `Src/config/default_config.h`: channel 2, 64 MHz PRF, 128-symbol preamble, 6.8 Mbps. Both modules must match.
 
-Status: steps 1 through 5 reviewed and accepted. The UART distance line is deferred. The role macros in the code are `TWR_INT` and `TWR_RSP`.
+Status: steps 1 through 7 reviewed and accepted. The UART distance line is deferred. The role macros in the code are `TWR_INT` and `TWR_RSP`.
 
 ```mermaid
 sequenceDiagram
@@ -262,7 +262,15 @@ Then set `rx_armed = 0`, `testAppState` to `TA_WAIT_POLL`, and `inst->done = 1`.
 
 ## Step 6 — antenna delay
 
-Do this in both images. One place covers both roles: the end of `instance_config()`, after `dwt_configure()`. `instance.c` already includes `tvc.h`, and that header defines `OTP_ANT_DLY` as `0x1C`.
+Do this in both images. Two edits in `Src/instance/instance.c`, and no other file.
+
+Declare the saved delay on the line after `static bool rx_armed = false;` (line 38):
+
+```text
+static uint16_t tx_ant_dly;
+```
+
+Insert the OTP read at the end of `instance_config()`, on the line after `dwt_configuretxrf(&configTx);` (line 567) and before the function's closing brace (line 568). `main` calls `instance_config()` for both modules, and that call is already after `dwt_configure()`. `instance.c` includes `tvc.h`, and that header defines `OTP_ANT_DLY` as `0x1C`.
 
 `tvc_otp_read_txcfgref()` already reads this word into `ref.antdly`, but only when all five OTP words pass `OTP_VALID`. Read `0x1C` directly so a bad TX-power word does not throw away a good antenna delay:
 
@@ -292,7 +300,7 @@ Keep `dly` in a file-scope `static uint16_t tx_ant_dly` so the initiator can see
 
 `dwt_readtxtimestamp()` and `dwt_readrxtimestamp()` then return times that already include this delay. The poll and response timestamps copied from those registers need no extra add. The responder's `resp_tx` is also a register read, so the responder formula stays as it is.
 
-The final's departure time is predicted, not read back. In `TA_WAIT_RESP`, replace the `+ 0`:
+The final's departure time is predicted, not read back. The only ranging line that changes is in `TA_WAIT_RESP` (line 271). Replace the `+ 0` on that line:
 
 ```text
 inst->final_tx = ((uint64_t)delayed32 << 8) + tx_ant_dly;
@@ -302,7 +310,57 @@ That is the only ranging line that changes. A constant offset that remains after
 
 ## Step 7 — callbacks
 
-`instance_rxgood`, `instance_rxtimeout`, and `instance_rxerror` are empty today. They must store an event the state machine already polls (`instance_data.event[]`, see `instance_run()`). On RX good, copy the frame with `dwt_readrxdata` before the next RX overwrites it. Re-enable RX after every timeout or error, or the responder goes deaf.
+The state machine already tests `DWT_SIG_RX_OKAY`, `DWT_SIG_RX_TIMEOUT`, and `DWT_SIG_RX_ERROR`. Those values stay 0 until an interrupt stores them. `message` in `instance_run()` is `instance_data.event[0]` at the start of each call. `event[]` holds two signals. `EXTI2_3_IRQHandler` in `stm32l0xx_it.c` already calls `dwt_isr()`, and `instance_init()` already registers the four callbacks with `dwt_setcallbacks`. The callbacks themselves are empty, and nothing enables the DW1000 interrupt mask, so the pin never fires.
+
+Enable the mask once, in `instance_init()`, on the line after `dwt_setcallbacks(...)`. Both images need it.
+
+```text
+dwt_setinterrupt(DWT_INT_RFCG | DWT_INT_RFTO | DWT_INT_RXPTO |
+                 DWT_INT_RPHE | DWT_INT_RFCE | DWT_INT_RFSL | DWT_INT_SFDT, 1);
+```
+
+`DWT_INT_RFCG` is a good frame and calls `instance_rxgood`. `DWT_INT_RFTO` and `DWT_INT_RXPTO` are timeouts and call `instance_rxtimeout`. The other four are receive errors and call `instance_rxerror`. Leave `instance_txcallback` empty. The state machine does not wait for a TX-done signal.
+
+These three functions run inside the interrupt. Copy the frame and store one event. Do not call `dwt_rxenable`, `sprintf`, or the state machine from here. `dwt_isr()` already turns the receiver off and resets it after a timeout or an error. The responder arms the receiver again in `TA_WAIT_POLL` when `rx_armed` is 0. The initiator arms it with `DWT_RESPONSE_EXPECTED` on the next poll or response. A second `dwt_rxenable` in the callback would start a receive before that state has chosen its next action.
+
+`instance_rxgood` copies the frame first, then posts the event. `rxd->datalength` includes the two CRC bytes, which matches `fcs[2]` in the frame structs. `rx_buffer` is 27 bytes, so cap the length there. A longer frame must not write past the array. `instance_rxtimeout` posts `DWT_SIG_RX_TIMEOUT`. `instance_rxerror` posts `DWT_SIG_RX_ERROR`. When `eventCnt` is already 2, drop the new signal. `instance_run()` consumes `event[0]`, and if `event[1]` is also set it handles that one in the same call.
+
+Replace the four empty bodies in `instance.c`. Do not call these functions from the state machine.
+
+```text
+void instance_txcallback(const dwt_cb_data_t *txd)
+{
+    (void)txd;
+}
+
+void instance_rxgood(const dwt_cb_data_t *rxd)
+{
+    uint16_t len = rxd->datalength;
+    if (len > sizeof(instance_data.rx_buffer))
+        len = sizeof(instance_data.rx_buffer);
+    dwt_readrxdata(instance_data.rx_buffer, len, 0);
+    if (instance_data.eventCnt < 2)
+        instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_OKAY;
+}
+
+void instance_rxtimeout(const dwt_cb_data_t *rxd)
+{
+    (void)rxd;
+    if (instance_data.eventCnt < 2)
+        instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_TIMEOUT;
+}
+
+void instance_rxerror(const dwt_cb_data_t *rxd)
+{
+    (void)rxd;
+    if (instance_data.eventCnt < 2)
+        instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_ERROR;
+}
+```
+
+`instance_txcallback` stays empty on purpose. Posting `DWT_SIG_TX_DONE` would occupy one of the two event slots, and the wait states do not treat that code as a received frame. `(void)txd` and `(void)rxd` keep the unused-parameter warning away. The timeout and error callbacks do not read `rx_buffer`: there is no valid frame.
+
+After this step, build both images. `text + data` must stay under 32768. The `_close` / `_read` linker warnings and the RWX warning are safe to ignore.
 
 ## Review
 

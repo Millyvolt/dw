@@ -27,8 +27,8 @@ extern "C" {
 #define TWR_INT	0
 #define TWR_RSP	1
 
-//#define TWR_ROLE	TWR_INT
-#define TWR_ROLE	TWR_RSP
+#define TWR_ROLE	TWR_INT
+//#define TWR_ROLE	TWR_RSP
 
 #define TS_MASK		0xFFFFFFFFFFULL		// select 40 bits in 64 bits word
 

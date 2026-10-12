@@ -268,13 +268,13 @@ int main(void)
 //	  vTestModeMotionDetect();
 
 	   //debug
-	   static volatile uint32 reg32 = 0, bp = 0;
-	   reg32 = dwt_read32bitreg(0x0E);
-	   reg32 = dwt_read32bitreg(0x0F);
-	   reg32 = 0;
-	   reg32 = dwt_readdevid();
-	   (void)reg32;
-	   ++bp;
+	  //  static volatile uint32 reg32 = 0, bp = 0;
+	  //  reg32 = dwt_read32bitreg(0x0E);
+	  //  reg32 = dwt_read32bitreg(0x0F);
+	  //  reg32 = 0;
+	  //  reg32 = dwt_readdevid();
+	  //  (void)reg32;
+	  //  ++bp;
 
       if( deca_uart_rx_data_ready() )
       {

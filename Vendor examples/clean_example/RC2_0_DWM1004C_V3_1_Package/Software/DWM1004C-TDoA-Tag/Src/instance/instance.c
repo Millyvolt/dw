@@ -26,15 +26,34 @@ LOWPOWER_RESTART_TIME. So LOWPOWER_RESTART_TIME is configured as 15 */
 
 #define DWT_SIG_RX_TIMEOUT              4
 
+#define DWT_SIG_RX_OKAY 				1
+#define DWT_SIG_TX_DONE 				2
+#define DWT_SIG_RX_ERROR 				3
+
 /* DW1000 device variables */
 static dwt_txconfig_t tx_cfg;
 static ref_values_t ref = {0};
 
+static bool rx_armed = false;
+static uint16_t tx_ant_delay = 0;
+static volatile int64_t distance_mm = 0;
+
+enum inst_states_old
+{
+   TA_INIT_OLD,
+   TA_SLEEP_DONE,
+   TA_TXBLINK_WAIT_SEND
+};
+
 enum inst_states
 {
    TA_INIT,
-   TA_SLEEP_DONE,
-   TA_TXBLINK_WAIT_SEND
+   TA_TX_POLL, 		// initiator sends the poll
+   TA_WAIT_RESP, 	// initiator waits for the response
+   TA_TX_FINAL, 	// initiator sends the delayed final
+   TA_WAIT_POLL,	// responder waits for a poll
+   TA_TX_RESP, 		// responder sends the delayed response
+   TA_WAIT_FINAL	// responder waits for the final
 };
 
 typedef struct {
@@ -172,12 +191,12 @@ void instancesettagaddress(instance_data_t *inst)
  * */
 int testapprun(instance_data_t *inst, int message)
 {
-	param_block_t * pbss = get_pbssConfig();
+//	param_block_t * pbss = get_pbssConfig();
     switch (inst->testAppState)
     {
         case TA_INIT :
         {
-            instancesettagaddress(inst);
+//            instancesettagaddress(inst);
 
             //configure the on wake parameters (upload the IC config settings)
 //            dwt_configuresleep(AON_WCFG_ONW_RADC | DWT_PRESRV_SLEEP| DWT_CONFIG,
@@ -262,6 +281,294 @@ int testapprun(instance_data_t *inst, int message)
     return inst->done;
 } // end testapprun()
 
+int testapprun_int(instance_data_t *inst, int message)
+{
+//	param_block_t * pbss = get_pbssConfig();
+
+    switch (inst->testAppState)
+    {
+        case TA_INIT :
+
+        	inst->testAppState = TA_TX_POLL;
+
+            break;
+
+        case TA_TX_POLL:
+
+        	inst->poll_msg.seq_num = inst->frame_sn++;
+        	inst->poll_msg.dst[0] = 2;
+        	inst->poll_msg.dst[1] = 0;
+        	inst->poll_msg.src[0] = 1;
+        	inst->poll_msg.src[1] = 0;
+        	inst->poll_msg.fc = FC_POLL;
+
+        	dwt_writetxdata(sizeof( inst->poll_msg), (uint8_t *)&inst->poll_msg, 0);
+        	dwt_writetxfctrl(sizeof(inst->poll_msg), 0, 1);
+        	dwt_setrxaftertxdelay(300);
+        	dwt_setrxtimeout(5000);
+        	dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+
+            inst->testAppState = TA_WAIT_RESP;
+        	inst->done = 1;
+
+            break;
+
+        case TA_WAIT_RESP:
+
+            /* Do temperature and voltage compensation and get the values of tx_cfg */
+            /* the right way:
+             * read T and V
+             * check the difference wrt previous T and V
+             * if greater than (in counts, dont need degrees and volts) - do TVC, store the new values
+             */
+//            tvc_comp(&tx_cfg, &ref, pbss->dwt_config.chan);
+
+            /* Configure tx power with new values for temperature and voltage compensation */
+//            dwt_configuretxrf(&tx_cfg);
+
+            // write the frame data
+//            dwt_writetxdata(length, (uint8 *)  (&inst->msg), 0) ;
+//            dwt_writetxfctrl(length, 0, 0);
+
+//            dwt_starttx(DWT_START_TX_IMMEDIATE); //always using immediate TX
+
+        	if(message == 0){
+
+        		inst->testAppState = TA_WAIT_RESP;
+        	}
+        	else if(message == DWT_SIG_RX_OKAY){
+
+        		// parce rx_buffer
+        		Ranging_Frame * rf = (Ranging_Frame *)instance_data.rx_buffer;
+
+        		if(rf->fc==FC_RESPONSE && rf->dst[0]==1 && rf->dst[1]==0 && rf->src[0]==2 && rf->src[1]==0)
+        		{
+        			//response ok
+        			uint8_t buf[5];
+        			dwt_readtxtimestamp(buf);
+        			inst->poll_tx = 0;
+        			for(int i=0; i < 5; ++i) {
+        				inst->poll_tx += (uint64_t)buf[i] << 8 * i;
+        				inst->final_msg.timestamps[i] = buf[i];
+        			}
+
+        			dwt_readrxtimestamp(buf);
+        			inst->resp_rx = 0;
+        			for(int i=0; i < 5; ++i){
+        				inst->resp_rx += (uint64_t)buf[i] << 8 * i;
+        				inst->final_msg.timestamps[i + 5] = buf[i];
+        			}
+
+        			uint64_t final_tx_time = inst->resp_rx + (3000ULL * 65536ULL);
+        			uint32_t delayed32 = (final_tx_time >> 8) & 0xFFFFFFFEUL;
+        			dwt_setdelayedtrxtime(delayed32);
+        			inst->final_tx = ((uint64_t)delayed32 << 8) + tx_ant_delay;
+
+        			inst->final_msg.seq_num = inst->frame_sn++;
+        			inst->final_msg.dst[0] = 2; inst->final_msg.dst[1] = 0;
+        			inst->final_msg.src[0] = 1; inst->final_msg.src[1] = 0;
+        			inst->final_msg.fc = FC_FINAL;
+
+        			for(int i=0; i < 5; ++i){
+        				inst->final_msg.timestamps[i + 10] = ( inst->final_tx >> 8 * i ) & 0xFF;
+        			}
+
+        			inst->testAppState = TA_TX_FINAL;
+        		}
+        		else
+        		{
+        			//response error
+        			inst->testAppState = TA_TX_POLL;
+        		}
+        	}
+        	else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
+
+        		inst->testAppState = TA_TX_POLL;
+        	}
+
+        	inst->done = 1;
+
+            break;
+
+        case TA_TX_FINAL:
+
+        	dwt_writetxdata(sizeof(inst->final_msg), (uint8_t *)&inst->final_msg, 0);
+        	dwt_writetxfctrl(sizeof(inst->final_msg), 0, 1);
+        	int status =
+        			dwt_starttx(DWT_START_TX_DELAYED);
+        	if(status == DWT_SUCCESS){
+        		uint32_t start = portGetTickCount();
+        		while(portGetTickCount() - start < 100) ;
+        	}
+
+        		inst->testAppState = TA_TX_POLL;
+        		inst->done = 1;
+
+        	break;
+
+        default:
+            break;
+    }
+
+    return inst->done;
+}
+
+int testapprun_rsp(instance_data_t *inst, int message)
+{
+	switch (inst->testAppState)
+	{
+	case TA_INIT :
+
+		inst->testAppState = TA_WAIT_POLL;
+
+		break;
+
+	case TA_WAIT_POLL:
+
+		if(message == 0){
+			if(rx_armed == false){
+				dwt_setrxtimeout(0);
+				dwt_rxenable(DWT_START_RX_IMMEDIATE);
+				rx_armed = 1;
+			}
+
+			// inst->done = 1;
+		}
+		else if(message == DWT_SIG_RX_OKAY){
+
+			// parce rx_buffer
+			Ranging_Frame * rf = (Ranging_Frame*)instance_data.rx_buffer;
+
+			if(rf->fc==FC_POLL && rf->dst[0]==2 && rf->dst[1]==0 && rf->src[0]==1 && rf->src[1]==0)
+			{
+				uint8_t buf[5];
+				dwt_readrxtimestamp(buf);
+				inst->poll_rx = 0;
+				for(int i=0; i < 5; ++i){
+					inst->poll_rx += (uint64_t)buf[i] << 8 * i;
+				}
+
+				uint64_t resp_tx_time = inst->poll_rx + (3000 * 65536);
+				uint32_t delayed32    = (resp_tx_time >> 8) & 0xFFFFFFFE;
+				dwt_setdelayedtrxtime(delayed32);
+
+				inst->resp_msg.seq_num = inst->frame_sn++;
+				inst->resp_msg.dst[0] = 1; inst->resp_msg.dst[1] = 0;
+				inst->resp_msg.src[0] = 2; inst->resp_msg.src[1] = 0;
+				inst->resp_msg.fc = FC_RESPONSE;
+
+				inst->testAppState = TA_TX_RESP;
+				// inst->done = 1;
+			}
+			else
+			{
+				rx_armed = false;
+			}
+		}
+		else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
+			rx_armed = false;
+			// inst->done = 1;
+		}
+
+        inst->done = 1;
+
+		break;
+
+	case TA_TX_RESP:
+
+		dwt_setrxaftertxdelay(300);
+		dwt_setrxtimeout(5000);
+		dwt_writetxdata(sizeof(inst->resp_msg), (uint8 *)&inst->resp_msg, 0);
+		dwt_writetxfctrl(sizeof(inst->resp_msg), 0, 1);
+
+		int status =
+		dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+		if(status == DWT_SUCCESS){
+			inst->testAppState = TA_WAIT_FINAL;
+		}
+		else{
+			rx_armed = 0;
+			inst->testAppState = TA_WAIT_POLL;
+		}
+
+		inst->done = 1;
+
+		break;
+
+    case TA_WAIT_FINAL:
+
+    	if(message == 0){
+    		inst->done = 1;
+    	}
+    	else if(message == DWT_SIG_RX_OKAY){
+
+			// parce rx_buffer
+			Ranging_Frame_Final * rff = (Ranging_Frame_Final *)instance_data.rx_buffer;
+
+			if(rff->fc==FC_FINAL && rff->dst[0]==2 && rff->dst[1]==0 && rff->src[0]==1 && rff->src[1]==0)
+			{
+				uint8_t buf[5];
+
+				dwt_readtxtimestamp(buf);
+				inst->resp_tx = 0;
+				for(int i=0; i < 5; ++i){
+					inst->resp_tx += (uint64_t)buf[i] << 8 * i;
+				}
+				dwt_readrxtimestamp(buf);
+				inst->final_rx = 0;
+				for(int i=0; i < 5; ++i){
+					inst->final_rx += (uint64_t)buf[i] << 8 * i;
+				}
+
+				inst->poll_tx = 0; inst->resp_rx = 0; inst->final_tx = 0;
+				for (int i = 0; i < 5; i++) {
+					inst->poll_tx  |= (uint64_t)rff->timestamps[i]      << (8 * i);
+					inst->resp_rx  |= (uint64_t)rff->timestamps[i + 5]  << (8 * i);
+					inst->final_tx |= (uint64_t)rff->timestamps[i + 10] << (8 * i);
+				}
+
+				int64_t Ra = (int64_t)((inst->resp_rx  - inst->poll_tx) & TS_MASK);
+				int64_t Da = (int64_t)((inst->final_tx - inst->resp_rx) & TS_MASK);
+				int64_t Rb = (int64_t)((inst->final_rx - inst->resp_tx) & TS_MASK);
+				int64_t Db = (int64_t)((inst->resp_tx  - inst->poll_rx) & TS_MASK);
+
+				int64_t sum = (Ra + Rb + Da + Db), tof = 0;
+				if(sum != 0)
+					tof = (Ra * Rb - Da * Db) / sum;
+				else
+					;	//distance_mm = 0;
+				distance_mm = tof * 299702547 / 63897600;
+				(void)distance_mm;
+
+				rx_armed = 0;
+				inst->testAppState = TA_WAIT_POLL;
+				inst->done = 1;
+			}
+			else
+			{
+				inst->testAppState = TA_WAIT_POLL;
+				rx_armed = false;
+			}
+
+    	}
+    	else if(message == DWT_SIG_RX_TIMEOUT || message == DWT_SIG_RX_ERROR){
+    		rx_armed = false;
+    		inst->testAppState = TA_WAIT_POLL;
+    		inst->done = 1;
+    	}
+
+
+    	break;
+
+	default:
+
+		break;
+
+	}
+
+	return inst->done;
+}
+
 // -----------------------------------------------------------------------------
 
 /* @fn  function to initialise instance structures
@@ -312,6 +619,9 @@ int instance_init(int sleep_enable)
                      instance_rxtimeout,
                      instance_rxerror);
 
+    dwt_setinterrupt(DWT_INT_RFCG | DWT_INT_RFTO | DWT_INT_RXPTO |
+    		DWT_INT_RPHE | DWT_INT_RFCE | DWT_INT_RFSL | DWT_INT_SFDT, 1);
+
 #if defined TRANSMITTER
     dwt_setinterrupt(DWT_INT_TFRS, 1);
 #elif defined LISTENER
@@ -323,6 +633,13 @@ int instance_init(int sleep_enable)
     instance_data.event[0] = 0;
     instance_data.event[1] = 0;
     instance_data.eventCnt = 0;
+
+	instance_data.poll_tx = 0;
+	instance_data.poll_rx = 0;
+	instance_data.resp_tx = 0;
+	instance_data.resp_rx = 0;
+	instance_data.final_tx = 0;
+	instance_data.final_rx = 0;
 
     return 0 ;
 }
@@ -352,6 +669,17 @@ void instance_config(param_block_t * pbss)
         configTx.power = (pow << 24) + (pow << 16) + (pow << 8) + pow;
     }
     dwt_configuretxrf(&configTx);
+
+    uint32_t word = 0;
+    dwt_otpread(OTP_ANT_DLY, &word, 1);
+    uint16_t delay = 0;
+    if (pbss->dwt_config.chan == 2)
+    	delay = (word >> 16) & 0xFFFF;
+    else if (pbss->dwt_config.chan == 5)
+    	delay = word & 0xFFFF;
+    tx_ant_delay = delay;
+    dwt_settxantennadelay(delay);
+    dwt_setrxantennadelay(delay);
 }
 /**
  * @fn  instance_txcallback
@@ -360,7 +688,7 @@ void instance_config(param_block_t * pbss)
  * */
 void instance_txcallback(const dwt_cb_data_t *txd)
 {
-    //empty function
+	(void)txd;
 }
 
 /**
@@ -370,10 +698,16 @@ void instance_txcallback(const dwt_cb_data_t *txd)
  * */
 void instance_rxgood(const dwt_cb_data_t *rxd)
 {
-   //empty function
 #if defined LISTENER
 	dwt_rxenable(DWT_START_RX_IMMEDIATE);
 #endif
+
+	uint16_t len = rxd->datalength;
+	if (len > sizeof(instance_data.rx_buffer))
+		len = sizeof(instance_data.rx_buffer);
+	dwt_readrxdata(instance_data.rx_buffer, len, 0);
+	if (instance_data.eventCnt < 2)
+		instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_OKAY;
 }
 
 /**
@@ -383,7 +717,9 @@ void instance_rxgood(const dwt_cb_data_t *rxd)
  * */
 void instance_rxtimeout(const dwt_cb_data_t *rxd)
 {
-    //empty function
+	(void)rxd;
+	if (instance_data.eventCnt < 2)
+		instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_TIMEOUT;
 }
 
 /**
@@ -393,7 +729,9 @@ void instance_rxtimeout(const dwt_cb_data_t *rxd)
  * */
 void instance_rxerror(const dwt_cb_data_t *rxd)
 {
-    //empty function
+	(void)rxd;
+	if (instance_data.eventCnt < 2)
+		instance_data.event[instance_data.eventCnt++] = DWT_SIG_RX_ERROR;
 }
 
 /**
@@ -445,12 +783,19 @@ int instance_run(void)
     int message = instance_data.event[0];
     int delay;
 
-    param_block_t *pbss = get_pbssConfig();
+//    param_block_t *pbss = get_pbssConfig();
 
     while(!done)
     {
         // run the communications application
-        done = testapprun(&instance_data, message) ;
+
+//        done = testapprun(&instance_data, message) ;
+
+		#if TWR_ROLE == TWR_INT
+        done = testapprun_int(&instance_data, message) ;
+		#elif TWR_ROLE == TWR_RSP
+        done = testapprun_rsp(&instance_data, message) ;
+		#endif
 
         if(message) // there was an event in the buffer
         {
@@ -476,12 +821,12 @@ int instance_run(void)
     }
 
 	  //debug
-	  static volatile uint32 reg32 = 0, bp = 0;
-	  reg32 = dwt_read32bitreg(0x0E);
-	  reg32 = dwt_read32bitreg(0x0F);
-	  reg32 = dwt_readdevid();
-	  (void)reg32;
-	  ++bp;
+//	  static volatile uint32 reg32 = 0, bp = 0;
+//	  reg32 = dwt_read32bitreg(0x0E);
+//	  reg32 = dwt_read32bitreg(0x0F);
+//	  reg32 = dwt_readdevid();
+//	  (void)reg32;
+//	  ++bp;
 
 
     /* we have sent the message and in sleep and need to timeout (Tag needs to

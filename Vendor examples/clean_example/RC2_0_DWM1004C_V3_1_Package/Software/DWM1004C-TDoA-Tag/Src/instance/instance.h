@@ -25,7 +25,17 @@ extern "C" {
 
 
 //#define TRANSMITTER
-#define LISTENER
+//#define LISTENER
+
+
+#define TWR_INT	0
+#define TWR_RSP	1
+
+#define TWR_ROLE	TWR_INT
+//#define TWR_ROLE	TWR_RSP
+
+#define TS_MASK		0xFFFFFFFFFFULL		// select 40 bits in 64 bits word
+
 
 
 typedef struct
@@ -63,6 +73,19 @@ typedef struct
     uint8        timeron;
     uint32        timeout;
     uint16_t chipSleep; // The DW1000 sleep duration
+
+    uint64_t poll_tx;
+    uint64_t poll_rx;
+    uint64_t resp_tx;
+    uint64_t resp_rx;
+    uint64_t final_tx;
+    uint64_t final_rx;
+
+    Ranging_Frame poll_msg;
+    Ranging_Frame resp_msg;
+    Ranging_Frame_Final final_msg;
+
+    uint8_t rx_buffer[27];
 } instance_data_t ;
 
 /* Exported functions prototypes */

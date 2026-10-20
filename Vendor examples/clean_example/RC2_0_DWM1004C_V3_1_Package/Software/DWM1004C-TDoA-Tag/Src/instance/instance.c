@@ -148,7 +148,11 @@ const uint16 rfDelays[2] = {
 };
 // -----------------------------------------------------------------------------
 
-instance_data_t instance_data ;
+instance_data_t instance_data = {
+	.poll_msg  = {.ctrl1=0x41, .ctrl2=0x88, .PAN_id[0]=0xAB, .PAN_id[1]=0xCD},
+	.resp_msg  = {.ctrl1=0x41, .ctrl2=0x88, .PAN_id[0]=0xAB, .PAN_id[1]=0xCD},
+	.final_msg = {.ctrl1=0x41, .ctrl2=0x88, .PAN_id[0]=0xAB, .PAN_id[1]=0xCD},
+																				};
 
 // -----------------------------------------------------------------------------
 // Functions
@@ -398,11 +402,11 @@ int testapprun_int(instance_data_t *inst, int message)
         			dwt_starttx(DWT_START_TX_DELAYED);
         	if(status == DWT_SUCCESS){
         		uint32_t start = portGetTickCount();
-        		while(portGetTickCount() - start < 100) ;
+        		while(portGetTickCount() - start < 100) ;	// 100 ms delay after success transmit
         	}
 
         		inst->testAppState = TA_TX_POLL;
-        		inst->done = 1;
+        		inst->done = 2;
 
         	break;
 
@@ -871,22 +875,23 @@ int instance_run(void)
 //        }
 
     	deca_sleep(100);
-
-        /* immediate wakeup after lowpower sleep */
-        instance_data.timeout = portGetTickCount();
-        instance_data.timeron = 1;
-        instance_data.done = 0;
+//
+//        /* immediate wakeup after lowpower sleep */
+//        instance_data.timeout = portGetTickCount();
+//        instance_data.timeron = 1;
+//        instance_data.done = 0;
     }
 
-    if(instance_data.timeron == 1)
-    {
-        if(instance_data.timeout <= portGetTickCount())
-        {
-            instance_data.timeron = 0;
-            instance_data.event[instance_data.eventCnt++] \
-                 = DWT_SIG_RX_TIMEOUT;
-        }
-    }
+//    if(instance_data.timeron == 1)
+//    {
+//        if(instance_data.timeout <= portGetTickCount())
+//        {
+//            instance_data.timeron = 0;
+//            instance_data.event[instance_data.eventCnt++] \
+//                 = DWT_SIG_RX_TIMEOUT;
+//        }
+//    }
+
     return 0;
 }
 

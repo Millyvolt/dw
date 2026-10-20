@@ -273,11 +273,12 @@ int main(void)
 //	  (void)reg32;
 //	  ++bp;
 
+//      if (app.blinkenable) {}
 
-      if (app.blinkenable)
-      {
-          instance_run();
-      }
+
+      instance_run();
+
+
   }
     /* USER CODE END WHILE */
 

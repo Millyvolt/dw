@@ -406,7 +406,7 @@ int testapprun_int(instance_data_t *inst, int message)
         	}
 
         		inst->testAppState = TA_TX_POLL;
-        		inst->done = 2;
+        		inst->done = 1;		//2;
 
         	break;
 

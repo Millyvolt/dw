@@ -623,7 +623,7 @@ int instance_init(int sleep_enable)
                      instance_rxtimeout,
                      instance_rxerror);
 
-    dwt_setinterrupt(DWT_INT_RFCG | DWT_INT_RFTO | DWT_INT_RXPTO |
+    dwt_setinterrupt(DWT_INT_TFRS | DWT_INT_RFCG | DWT_INT_RFTO | DWT_INT_RXPTO |
     		DWT_INT_RPHE | DWT_INT_RFCE | DWT_INT_RFSL | DWT_INT_SFDT, 1);
 
 #if defined TRANSMITTER

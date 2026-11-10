@@ -1,0 +1,10 @@
+../Src/utils/translate.c:15:5:chan_to_deca	16	static
+../Src/utils/translate.c:36:5:deca_to_chan	16	static
+../Src/utils/translate.c:43:5:bitrate_to_deca	16	static
+../Src/utils/translate.c:58:5:deca_to_bitrate	16	static
+../Src/utils/translate.c:75:5:prf_to_deca	16	static
+../Src/utils/translate.c:89:5:deca_to_prf	16	static
+../Src/utils/translate.c:104:5:pac_to_deca	16	static
+../Src/utils/translate.c:121:5:deca_to_pac	16	static
+../Src/utils/translate.c:140:5:plen_to_deca	16	static
+../Src/utils/translate.c:165:5:deca_to_plen	16	static

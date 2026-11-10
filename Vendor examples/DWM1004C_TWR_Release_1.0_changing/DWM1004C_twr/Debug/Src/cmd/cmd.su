@@ -1,0 +1,2 @@
+../Src/cmd/cmd.c:36:13:cmd_onERROR	536	static
+../Src/cmd/cmd.c:54:6:command_parser	80	static

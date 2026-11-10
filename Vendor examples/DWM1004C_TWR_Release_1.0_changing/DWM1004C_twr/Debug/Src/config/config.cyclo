@@ -1,0 +1,11 @@
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_crc.h:157:22:LL_CRC_ResetCRCCalculationUnit	1
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_crc.h:352:22:LL_CRC_FeedData8	1
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_crc.h:387:25:LL_CRC_ReadData8	1
+../Src/config/config.c:38:13:LockEeprom	2
+../Src/config/config.c:63:13:UnlockEeprom	3
+../Src/config/config.c:84:13:EepromProgram	1
+../Src/config/config.c:94:16:CRC8_Calculate	2
+../Src/config/config.c:110:6:save_bssConfig	2
+../Src/config/config.c:137:6:load_bssConfig	2
+../Src/config/config.c:150:16:get_pbssConfig	1
+../Src/config/config.c:162:6:restore_nvm_fconfig	1

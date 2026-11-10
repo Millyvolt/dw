@@ -1,0 +1,11 @@
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_spi.h:732:26:LL_SPI_IsActiveFlag_RXNE	16	static
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_spi.h:743:26:LL_SPI_IsActiveFlag_TXE	16	static
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_spi.h:794:26:LL_SPI_IsActiveFlag_BSY	16	static
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_spi.h:1076:25:LL_SPI_ReceiveData8	16	static
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_spi.h:1099:22:LL_SPI_TransmitData8	24	static
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_gpio.h:843:22:LL_GPIO_SetOutputPin	16	static
+../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_gpio.h:872:22:LL_GPIO_ResetOutputPin	16	static
+../Src/Port/deca_spi.c:31:5:openspi	8	static
+../Src/Port/deca_spi.c:42:5:closespi	8	static
+../Src/Port/deca_spi.c:54:5:writetospi	32	static
+../Src/Port/deca_spi.c:100:5:readfromspi	40	static

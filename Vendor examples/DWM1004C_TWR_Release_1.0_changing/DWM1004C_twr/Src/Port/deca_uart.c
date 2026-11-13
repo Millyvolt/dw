@@ -51,6 +51,16 @@ int _write(int file, char *ptr, int len)
     return len;
 }
 
+void write_hello()
+{
+	__io_putchar('H');
+	__io_putchar('e');
+	__io_putchar('l');
+	__io_putchar('l');
+	__io_putchar('o');
+	__io_putchar('\n');
+}
+
 bool deca_uart_rx_data_ready(void)
 {
     return uart_rx_data_ready;
@@ -62,7 +72,9 @@ void UART_RxCpltCallback( uint8_t data )
 {
 
     /* Local echo*/
-    __io_putchar((int)data);
+
+//    __io_putchar((int)data);
+
     // wait for transmission complete
     while ( !LL_USART_IsActiveFlag_TC( USART2 ) );
 
@@ -114,7 +126,7 @@ void dw_printf( const char * format, ... )
     va_list args;
     va_start (args, format);
     sz = vsnprintf (buffer, sizeof(buffer) , format, args);
-    if( ( sz >= 0 ) && ( sz <= sizeof(buffer) && ( rx_buf_index == 0 ) ) )
+//    if( ( sz >= 0 ) && ( sz <= sizeof(buffer) && ( rx_buf_index == 0 ) ) )
     {
 //      int32_t ret;
         port_tx_msg ((uint8_t *)buffer,sz);

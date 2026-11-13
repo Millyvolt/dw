@@ -3,8 +3,9 @@
 ../Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_ll_usart.h:3616:22:LL_USART_TransmitData8	1
 ../Src/Port/deca_uart.c:35:5:__io_putchar	2
 ../Src/Port/deca_uart.c:44:5:_write	2
-../Src/Port/deca_uart.c:54:6:deca_uart_rx_data_ready	1
-../Src/Port/deca_uart.c:61:6:UART_RxCpltCallback	8
-../Src/Port/deca_uart.c:101:6:port_tx_msg	1
-../Src/Port/deca_uart.c:110:6:dw_printf	4
-../Src/Port/deca_uart.c:134:10:deca_uart_receive	2
+../Src/Port/deca_uart.c:54:6:write_hello	1
+../Src/Port/deca_uart.c:64:6:deca_uart_rx_data_ready	1
+../Src/Port/deca_uart.c:71:6:UART_RxCpltCallback	8
+../Src/Port/deca_uart.c:113:6:port_tx_msg	1
+../Src/Port/deca_uart.c:122:6:dw_printf	1
+../Src/Port/deca_uart.c:146:10:deca_uart_receive	2

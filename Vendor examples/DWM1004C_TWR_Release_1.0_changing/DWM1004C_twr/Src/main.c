@@ -110,6 +110,9 @@ app_cfg_t app;
 #include "deca_spi.h"
 #include "port_platform.h"
 
+
+volatile uint64_t dist_cm;
+
 extern void set_los_nlos_config( uint8_t nlos );
 
 /* Default antenna delay values for 64 MHz PRF. */
@@ -335,7 +338,7 @@ void resp_to_poll( uint8_t *p_rx_buffer , uint8_t len )
             frame_seq_nb++;
         } else
         {
-            dw_printf("ERR TX_DLYED\n");
+//            dw_printf("ERR TX_DLYED\n");
         }
     }
     return;
@@ -346,7 +349,7 @@ void calc_tof_from_rcved_resp( uint8_t *p_rx_buffer , uint8_t len )
     uint32 poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
     int32_t rtd_init, rtd_resp , rx_lvl , clk_offs_ppm_x100;
     dwt_rxdiag_t diagnostics;
-    uint64_t dist_cm , c_hz2ppm_mult_chan;
+    uint64_t /*dist_cm ,*/ c_hz2ppm_mult_chan;
     int64_t clk_offs;
 
     if (memcmp(p_rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0)
@@ -446,8 +449,10 @@ const uint8_t pg_delay_table40[ NUM_CH_SUPPORTED ] =
 REG_FN(f_TWRInitSet);
 REG_FN(f_TWRRespSet);
 
-//uint8_t role = TWR_INIT;
-uint8_t role = 0;	// responder
+uint8_t role = TWR_INIT;
+//uint8_t role = 0;	// responder
+
+void write_hello();
 
 
 /* USER CODE END 0 */
@@ -566,8 +571,13 @@ int main(void)
     /* USER CODE BEGIN WHILE */
     while (1)
     {
+
+//    	dw_printf("Main\n");
+    	write_hello();
+
         if( b_user_button )
         {
+
             b_user_button = 0;
 //            dw_printf("User button pressed\n");
             if( app.pConfig->twr_role == TWR_INIT )

@@ -1276,12 +1276,12 @@ ARM Macro Assembler    Page 20
               00000400 
               00000200 
               00000000 
-Command Line: --debug --xref --diag_suppress=9931,A1950W --cpu=Cortex-M7.fp.dp 
---depend=.\03-lcd_test_0_96\startup_stm32h743xx.d -o.\03-lcd_test_0_96\startup_
-stm32h743xx.o -I.\RTE\_03-LCD_Test -IC:\Users\v_kalinychev\AppData\Local\Arm\Pa
-cks\ARM\CMSIS\6.1.0\CMSIS\Core\Include --predefine="__UVISION_VERSION SETA 541"
- --predefine="STM32H743xx SETA 1" --predefine="_RTE_ SETA 1" --list=startup_stm
-32h743xx.lst startup_stm32h743xx.s
+Command Line: --debug --xref --diag_suppress=9931 --cpu=Cortex-M7.fp.dp --depen
+d=.\03-lcd_test_0_96\startup_stm32h743xx.d -o.\03-lcd_test_0_96\startup_stm32h7
+43xx.o -I.\RTE\_03-LCD_Test -IC:\Users\Пользователь\AppData\Local\Arm\Packs\ARM
+\CMSIS\5.8.0\CMSIS\Core\Include --predefine="__UVISION_VERSION SETA 536" --pred
+efine="_RTE_ SETA 1" --predefine="STM32H743xx SETA 1" --predefine="_RTE_ SETA 1
+" --list=startup_stm32h743xx.lst startup_stm32h743xx.s
 
 
 

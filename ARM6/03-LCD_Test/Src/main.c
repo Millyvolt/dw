@@ -28,6 +28,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "lcd.h"
+
+
+#include <string.h>
+
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,6 +53,13 @@
 
 /* USER CODE BEGIN PV */
 
+
+	#define RX_BUF_SIZE				32
+	uint8_t tx[] = "hello\r\n";
+	uint8_t rx[RX_BUF_SIZE];
+	
+	
+	
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -129,6 +141,21 @@ static void RTC_CalendarShow(RTC_DateTypeDef *sdatestructureget,RTC_TimeTypeDef 
   HAL_RTC_GetDate(&hrtc, sdatestructureget, RTC_FORMAT_BIN);
 }
 
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	
+	// need some RX flag reset?
+	//
+	
+	if(huart == &huart2){
+		
+		
+		HAL_UART_Receive_IT(&huart2, rx, 5);
+	}
+}
+
+
 /* USER CODE END 0 */
 
 /**
@@ -183,10 +210,12 @@ int main(void)
 	RTC_TimeTypeDef stimestructureget;
 	
 	
-	uint8_t tx[] = "hello\r\n";
-	uint8_t rx[32];
+	memset(rx, 0, RX_BUF_SIZE);
 
 
+	HAL_UART_Receive_IT(&huart2, rx, 5);
+		
+		
   while (1)
   {
     /* USER CODE END WHILE */
@@ -206,12 +235,10 @@ int main(void)
 		LED_Blink(3,1000);
 		
 		
-		HAL_UART_Transmit(&huart2, tx, sizeof(tx) - 1, 100);
-		if (HAL_UART_Receive(&huart2, rx, sizeof(rx), 100) == HAL_OK) {
-			HAL_UART_Transmit(&huart2, rx, sizeof(rx), 100);
+//		HAL_UART_Transmit(&huart2, tx, sizeof(tx) - 1, 100);
+				
 }
 		
-  }
   /* USER CODE END 3 */
 }
 
